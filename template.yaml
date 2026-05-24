@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Voice memo upload service. Issues presigned S3 PUT URLs for audio files
+  via an API-key-protected HTTP API endpoint.
+
+Parameters:
+  ApiKey:
+    Type: String
+    NoEcho: true
+    Description: Shared secret expected in the x-api-key header.
+  BucketName:
+    Type: String
+    Default: aws-voice-memo
+    Description: Name of the S3 bucket that stores voice memos.
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 128
+    Architectures:
+      - arm64
+
+Resources:
+  VoiceMemoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+            MaxAge: 300
+
+  UploadUrlApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+
+  UploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: src/
+      Environment:
+        Variables:
+          API_KEY: !Ref ApiKey
+          BUCKET_NAME: !Ref BucketName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${VoiceMemoBucket.Arn}/unprocessed/*"
+      Events:
+        Upload:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadUrlApi
+            Path: /upload-url
+            Method: POST
+
+Outputs:
+  ApiEndpoint:
+    Description: POST here with x-api-key header to get a presigned upload URL.
+    Value: !Sub "https://${UploadUrlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/upload-url"
+  BucketArn:
+    Description: ARN of the voice memo bucket.
+    Value: !GetAtt VoiceMemoBucket.Arn

@@ -1,0 +1,11 @@
+{
+  "name": "voice-memo-upload-url",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Issues presigned S3 PUT URLs for voice memo uploads.",
+  "main": "index.mjs",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0"
+  }
+}
