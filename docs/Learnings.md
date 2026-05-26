@@ -1,0 +1,5 @@
+- Event driven workflow is doable using apple shortcut app + aws ecosystem
+- However, there is a problem with Aws transcribe service which halted development
+- livekit can take care of aws transcribe's job but is wrong tool for the job as it specialises more in live streaming
+- But decided to go with deepgram as it is more flexible and cheaper
+- Need to now display the transcribed text to a discordbot via webhook. Should be do-able.

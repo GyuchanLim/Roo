@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   ConflictException,
   StartTranscriptionJobCommand,
@@ -10,7 +10,9 @@ import path from "node:path";
 
 const API_KEY = process.env.API_KEY;
 const BUCKET_NAME = process.env.BUCKET_NAME;
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const OUTPUT_PREFIX = process.env.OUTPUT_PREFIX || "processed";
+const TRANSCRIPTION_BACKEND = process.env.TRANSCRIPTION_BACKEND || "aws-transcribe";
 const TRANSCRIBE_DATA_ACCESS_ROLE_ARN = process.env.TRANSCRIBE_DATA_ACCESS_ROLE_ARN;
 const TRANSCRIBE_LANGUAGE_CODE = process.env.TRANSCRIBE_LANGUAGE_CODE || "en-US";
 const MAX_SPEAKER_LABELS = Number(process.env.MAX_SPEAKER_LABELS || 4);
@@ -57,6 +59,8 @@ export const handler = async (event) => {
 };
 
 export const startTranscriptionHandler = async (event) => {
+  validateTranscriptionBackend();
+
   const results = [];
 
   for (const record of event.Records || []) {
@@ -71,6 +75,17 @@ export const startTranscriptionHandler = async (event) => {
     const objectIdentity = makeObjectIdentity(bucket, key, record.s3?.object);
     const transcriptionJobName = makeTranscriptionJobName(baseName, objectIdentity);
     const outputKey = `${OUTPUT_PREFIX}/${baseName}/${objectIdentity}/transcript.json`;
+
+    if (TRANSCRIPTION_BACKEND === "deepgram") {
+      await transcribeWithDeepgram({ bucket, key, outputKey });
+      results.push({
+        key,
+        outputKey,
+        status: "completed",
+        transcriptionBackend: TRANSCRIPTION_BACKEND
+      });
+      continue;
+    }
 
     const command = new StartTranscriptionJobCommand({
       TranscriptionJobName: transcriptionJobName,
@@ -104,6 +119,60 @@ export const startTranscriptionHandler = async (event) => {
   }
 
   return { results };
+};
+
+const validateTranscriptionBackend = () => {
+  if (!["aws-transcribe", "deepgram"].includes(TRANSCRIPTION_BACKEND)) {
+    throw new Error(`Unsupported TRANSCRIPTION_BACKEND: ${TRANSCRIPTION_BACKEND}`);
+  }
+
+  if (TRANSCRIPTION_BACKEND === "deepgram" && !DEEPGRAM_API_KEY) {
+    throw new Error("DEEPGRAM_API_KEY is required when TRANSCRIPTION_BACKEND=deepgram");
+  }
+};
+
+const transcribeWithDeepgram = async ({ bucket, key, outputKey }) => {
+  const audioUrl = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key
+    }),
+    { expiresIn: 3600 }
+  );
+
+  const response = await fetch(deepgramListenUrl(), {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${DEEPGRAM_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ url: audioUrl })
+  });
+  const responseBody = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Deepgram transcription failed (${response.status}): ${responseBody.slice(0, 500)}`);
+  }
+
+  const transcript = JSON.parse(responseBody);
+
+  await s3.send(new PutObjectCommand({
+    Bucket: bucket,
+    Key: outputKey,
+    ContentType: "application/json",
+    Body: JSON.stringify(transcript, null, 2)
+  }));
+};
+
+const deepgramListenUrl = () => {
+  const url = new URL("https://api.deepgram.com/v1/listen");
+  url.searchParams.set("model", "nova-3");
+  url.searchParams.set("smart_format", "true");
+  url.searchParams.set("diarize", "true");
+  url.searchParams.set("utterances", "true");
+
+  return url;
 };
 
 const decodeS3Key = (key) => decodeURIComponent(key.replace(/\+/g, " "));

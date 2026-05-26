@@ -23,14 +23,29 @@ Parameters:
     MinValue: 2
     MaxValue: 10
     Description: Maximum number of speakers for Transcribe diarization.
+  TranscriptionBackend:
+    Type: String
+    Default: aws-transcribe
+    AllowedValues:
+      - aws-transcribe
+      - deepgram
+    Description: Transcription backend to use for uploaded voice memos.
+  DeepgramApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Deepgram API key. Required only when TranscriptionBackend is deepgram.
 
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs24.x
     Timeout: 10
     MemorySize: 128
     Architectures:
       - arm64
+
+Conditions:
+  UseDeepgramBackend: !Equals [!Ref TranscriptionBackend, deepgram]
 
 Resources:
   VoiceMemoBucket:
@@ -116,14 +131,31 @@ Resources:
     Properties:
       Handler: index.startTranscriptionHandler
       CodeUri: src/
+      Timeout: 300
       Environment:
         Variables:
+          DEEPGRAM_API_KEY: !Ref DeepgramApiKey
           OUTPUT_PREFIX: processed
+          TRANSCRIPTION_BACKEND: !Ref TranscriptionBackend
           TRANSCRIBE_DATA_ACCESS_ROLE_ARN: !GetAtt TranscribeDataAccessRole.Arn
           TRANSCRIBE_LANGUAGE_CODE: !Ref TranscribeLanguageCode
           MAX_SPEAKER_LABELS: !Ref MaxSpeakerLabels
       Policies:
         - Statement:
+            - !If
+              - UseDeepgramBackend
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/unprocessed/*"
+              - !Ref AWS::NoValue
+            - !If
+              - UseDeepgramBackend
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/processed/*"
+              - !Ref AWS::NoValue
             - Effect: Allow
               Action:
                 - transcribe:StartTranscriptionJob
