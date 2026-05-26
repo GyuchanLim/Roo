@@ -6,7 +6,7 @@ capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
 confirm_changeset = true
 s3_prefix = "voice-memo"
-parameter_overrides = "BucketName=\"aws-voice-memo\""
+parameter_overrides = "BucketName=\"aws-voice-memo\" TranscribeLanguageCode=\"en-US\" MaxSpeakerLabels=\"4\""
 image_repositories = []
 
 [default.global.parameters]

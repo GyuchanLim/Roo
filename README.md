@@ -6,9 +6,13 @@ memos. Requests are authenticated with a shared `x-api-key` header.
 ## Architecture
 
 - **HTTP API** (`/upload-url`, POST) → **Lambda** → returns a presigned URL.
-- The Lambda can only `PutObject` under `unprocessed/` in the bucket.
+- The upload Lambda can only `PutObject` under `unprocessed/` in the bucket.
 - **S3 bucket** (`aws-voice-memo`) — encrypted, all public access blocked, CORS
   allows browser PUT uploads.
+- **S3 ObjectCreated event** for `unprocessed/` → **Lambda** → starts an AWS
+  Transcribe job with speaker diarization.
+- **AWS Transcribe** assumes a dedicated data access role to read
+  `unprocessed/*` and write results under `processed/*`.
 
 ## Deploy
 
@@ -38,11 +42,19 @@ curl -X PUT "$UPLOAD_URL" \
   --data-binary @memo.m4a
 ```
 
-The presigned URL expires after 300 seconds.
+If `fileName` has no extension, the service appends `.m4a` before creating the
+S3 key. The response includes the final `fileName` and `key`.
+
+The presigned URL expires after 300 seconds. When the upload completes, the S3
+event starts transcription automatically. Diarized JSON output is written to:
+
+```text
+s3://<bucket>/processed/<recording-name>/<object-identity>/transcript.json
+```
 
 ## Notes
 
-- `BucketName` and `ApiKey` are template parameters; override with
-  `--parameter-overrides` if needed.
+- `BucketName`, `ApiKey`, `TranscribeLanguageCode`, and `MaxSpeakerLabels` are
+  template parameters; override with `--parameter-overrides` if needed.
 - The bucket is created and managed by this stack. If `aws-voice-memo` already
   exists in your account, either import it or pass a different `BucketName`.
