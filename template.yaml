@@ -53,6 +53,12 @@ Resources:
     Properties:
       Handler: index.handler
       CodeUri: src/
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowMethods: [POST]
+          AllowOrigins: ["*"]
+          AllowHeaders: [content-type, x-api-key]
       Environment:
         Variables:
           API_KEY: !Ref ApiKey
@@ -75,6 +81,9 @@ Outputs:
   ApiEndpoint:
     Description: POST here with x-api-key header to get a presigned upload URL.
     Value: !Sub "https://${UploadUrlApi}.execute-api.${AWS::Region}.amazonaws.com/prod/upload-url"
+  FunctionUrl:
+    Description: Direct Lambda Function URL (auth handled in-code via x-api-key).
+    Value: !GetAtt UploadUrlFunctionUrl.FunctionUrl
   BucketArn:
     Description: ARN of the voice memo bucket.
     Value: !GetAtt VoiceMemoBucket.Arn
