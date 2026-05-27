@@ -16,7 +16,7 @@ flowchart TD
   H --> I[Apple Shortcuts<br/>PUT audio to uploadUrl]
   I --> J[S3 Bucket<br/>unprocessed/file.m4a]
 
-  J --> K[S3 ObjectCreated event]
+  J --> K[S3 ObjectCreated event<br/>prefix unprocessed/]
   K --> L[Transcription Starter Lambda]
 
   L --> M{Transcription backend}
@@ -31,6 +31,11 @@ flowchart TD
   M -. AWS Transcribe alternate<br/>blocked in current account .-> N[AWS Transcribe<br/>diarization job]
   N -. writes JSON if account enabled .-> O
 
-  O --> U[Transcript available in S3<br/>with speaker labels]
+  O --> U[S3 ObjectCreated event<br/>prefix processed/<br/>suffix transcript.json]
+  U --> V[Discord Notifier Lambda]
+  V --> W[DynamoDB idempotency claim<br/>bucket/key]
+  W --> X[Read transcript JSON<br/>from processed/]
+  X --> Y[Summarize transcript<br/>with Anthropic Messages API]
+  Y --> AA[POST Discord webhook<br/>summary]
+  AA --> AB[Discord channel message]
 ```
-

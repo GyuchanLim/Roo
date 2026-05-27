@@ -35,6 +35,20 @@ Parameters:
     Default: ""
     NoEcho: true
     Description: Deepgram API key. Required only when TranscriptionBackend is deepgram.
+  AnthropicApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Anthropic API key for transcript summaries and Discord notifications.
+  AnthropicModel:
+    Type: String
+    Default: claude-sonnet-4-20250514
+    Description: Anthropic model used to summarize transcripts.
+  DiscordWebhookUrl:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Discord webhook URL for transcript summary notifications.
 
 Globals:
   Function:
@@ -46,6 +60,9 @@ Globals:
 
 Conditions:
   UseDeepgramBackend: !Equals [!Ref TranscriptionBackend, deepgram]
+  EnableDiscordNotifications: !And
+    - !Not [!Equals [!Ref AnthropicApiKey, ""]]
+    - !Not [!Equals [!Ref DiscordWebhookUrl, ""]]
 
 Resources:
   VoiceMemoBucket:
@@ -124,7 +141,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:PutObject
-                Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/processed/*"
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/processed/*/transcript.json"
 
   StartTranscriptionFunction:
     Type: AWS::Serverless::Function
@@ -179,6 +196,62 @@ Resources:
                   - Name: prefix
                     Value: unprocessed/
 
+  DiscordNotificationTable:
+    Type: AWS::DynamoDB::Table
+    Condition: EnableDiscordNotifications
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: transcriptKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transcriptKey
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  NotifyDiscordFunction:
+    Type: AWS::Serverless::Function
+    Condition: EnableDiscordNotifications
+    Properties:
+      Handler: index.notifyDiscordHandler
+      CodeUri: src/
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          ANTHROPIC_MODEL: !Ref AnthropicModel
+          DISCORD_NOTIFICATION_TABLE: !Ref DiscordNotificationTable
+          DISCORD_WEBHOOK_URL: !Ref DiscordWebhookUrl
+          OUTPUT_PREFIX: processed
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/processed/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !GetAtt DiscordNotificationTable.Arn
+      Events:
+        ProcessedTranscript:
+          Type: S3
+          Properties:
+            Bucket: !Ref VoiceMemoBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: processed/
+                  - Name: suffix
+                    Value: transcript.json
+
 Outputs:
   ApiEndpoint:
     Description: POST here with x-api-key header to get a presigned upload URL.
@@ -192,3 +265,7 @@ Outputs:
   TranscribeDataAccessRoleArn:
     Description: ARN of the IAM role AWS Transcribe assumes to read input and write output.
     Value: !GetAtt TranscribeDataAccessRole.Arn
+  DiscordNotificationTableName:
+    Condition: EnableDiscordNotifications
+    Description: DynamoDB table used to dedupe Discord transcript notifications.
+    Value: !Ref DiscordNotificationTable

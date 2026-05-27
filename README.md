@@ -20,7 +20,11 @@ diarization while keeping audio storage and outputs in S3.
    temporary S3 GET URL for the audio, posts that URL to Deepgram prerecorded
    transcription with `model=nova-3`, `diarize=true`, and `utterances=true`, then
    writes Deepgram's JSON response to `processed/`.
-6. The final transcript is stored at:
+6. **S3 ObjectCreated** on `processed/*/transcript.json` invokes
+   `NotifyDiscordFunction` when `AnthropicApiKey` and `DiscordWebhookUrl` are
+   configured. The notifier deduplicates the transcript in DynamoDB, summarizes
+   it with Anthropic Messages API, and posts the summary to Discord.
+7. The final transcript is stored at:
 
 ```text
 s3://<bucket>/processed/<recording-name>/<object-identity>/transcript.json
@@ -33,8 +37,13 @@ Security boundaries:
   the Deepgram backend is selected.
 - The S3 bucket is encrypted and blocks public access. Deepgram only receives a
   temporary presigned GET URL for a specific uploaded object.
+- The Discord notifier can only read `processed/*` objects and write idempotency
+  rows to its DynamoDB table. Claims use a short lease before the Discord post
+  and TTL cleanup for old dedupe rows. Discord receives the Anthropic summary.
+- Discord notifications use `allowed_mentions: { parse: [] }` so transcript
+  content cannot trigger channel-wide or user mentions.
 - The public HTTP endpoints are guarded by the shared `x-api-key`; do not commit
-  the real key.
+  real API keys or webhook URLs.
 
 AWS Transcribe support remains in the code as an alternate backend, but it is not
 the current working deployment because this AWS account returns
@@ -53,18 +62,22 @@ sam deploy --guided   # first time; prompts for the ApiKey parameter
 On later deploys just run `sam deploy`. The API endpoint is printed as a stack
 output (`ApiEndpoint`).
 
-The working deployment uses Deepgram. Run the helper script to deploy or update
-that backend. It prompts for secrets without echoing them, builds the app, deploys
-with `TranscriptionBackend=deepgram`, waits for the stack update, and prints the
-stack outputs:
+The working deployment uses Deepgram plus Discord notifications. Run the helper
+script to deploy or update that backend. It prompts for secrets without echoing
+them, builds the app, deploys with `TranscriptionBackend=deepgram`, waits for the
+stack update, and prints the stack outputs:
 
 ```bash
-scripts/deploy-deepgram.sh
+scripts/deploy-voice-memo.sh
 ```
 
-You can also provide non-secret overrides through environment variables, for
-example `BUCKET_NAME`, `AWS_REGION`, `TRANSCRIBE_LANGUAGE_CODE`, and
-`MAX_SPEAKER_LABELS`.
+The helper also loads a repo-local `.env` file before prompting. Start from
+`.env.example`, fill in the keys locally, and keep `.env` uncommitted. You can
+provide overrides through `.env` or shell environment variables, for example
+`BUCKET_NAME`, `AWS_REGION`, `TRANSCRIBE_LANGUAGE_CODE`, `MAX_SPEAKER_LABELS`,
+and `ANTHROPIC_MODEL`. Secret variables accepted by
+the helper are `API_KEY`, `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, and
+`DISCORD_WEBHOOK_URL`.
 
 ## Usage
 
@@ -91,10 +104,18 @@ event starts transcription automatically. Diarized JSON output is written to:
 s3://<bucket>/processed/<recording-name>/<object-identity>/transcript.json
 ```
 
+That processed transcript then triggers the Discord notifier. Check notifier logs
+from the AWS Lambda console or with:
+
+```bash
+sam logs --stack-name voice-memo --name NotifyDiscordFunction --region ap-southeast-2 --tail
+```
+
 ## Notes
 
 - `BucketName`, `ApiKey`, `TranscribeLanguageCode`, `MaxSpeakerLabels`,
-  `TranscriptionBackend`, and `DeepgramApiKey` are template parameters; override
+  `TranscriptionBackend`, `DeepgramApiKey`, `AnthropicApiKey`,
+  `AnthropicModel`, and `DiscordWebhookUrl` are template parameters; override
   with `--parameter-overrides` if needed.
 - `TranscriptionBackend` defaults to `aws-transcribe` in the template for
   backwards compatibility, but the verified working deployment uses `deepgram`.
