@@ -1,4 +1,4 @@
-# Voice Memo Upload Service
+# Roo! The Voice Memo Upload Service
 
 AWS SAM stack that issues short-lived presigned S3 PUT URLs for uploading voice
 memos. Requests are authenticated with a shared `x-api-key` header.
